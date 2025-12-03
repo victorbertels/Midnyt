@@ -33,11 +33,14 @@ st.markdown("Check menu items and inventory across your catalogs")
 account = "690b7701ad081789f16340e5"
 
 def getToken():
+    client_id = None
+    client_secret = None
+    
     # Try to get credentials from Streamlit secrets first
     try:
-        client_id = st.secrets.get("CLIENT_ID")
-        client_secret = st.secrets.get("CLIENT_SECRET")
-    except:
+        client_id = st.secrets["CLIENT_ID"]
+        client_secret = st.secrets["CLIENT_SECRET"]
+    except (KeyError, FileNotFoundError):
         # Fall back to .env file
         try:
             from dotenv import load_dotenv
@@ -45,11 +48,25 @@ def getToken():
             client_id = os.getenv("CLIENT_ID")
             client_secret = os.getenv("CLIENT_SECRET")
         except:
-            st.error("❌ Could not find credentials. Please configure .env file or Streamlit secrets.")
-            return None
+            pass
     
     if not client_id or not client_secret:
         st.error("❌ CLIENT_ID and CLIENT_SECRET not found. Please configure .env file or Streamlit secrets.")
+        st.info("""
+        **For Streamlit Cloud/Secrets:**
+        Create `.streamlit/secrets.toml` with:
+        ```
+        CLIENT_ID = "your_client_id"
+        CLIENT_SECRET = "your_client_secret"
+        ```
+        
+        **For local .env file:**
+        Create `.env` with:
+        ```
+        CLIENT_ID=your_client_id
+        CLIENT_SECRET=your_client_secret
+        ```
+        """)
         return None
     
     url = "https://api.deliverect.io/oauth/token"
