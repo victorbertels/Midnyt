@@ -39,19 +39,19 @@ def getToken():
     # Try to get credentials from Streamlit secrets first
     try:
         client_id = st.secrets["CLIENT_ID"]
-        client_secret = st.secrets["CLIENT_SECRET"]
+        client_secret = st.secrets["CLIENT_KEY"]
     except (KeyError, FileNotFoundError):
         # Fall back to .env file
         try:
             from dotenv import load_dotenv
             load_dotenv()
             client_id = os.getenv("CLIENT_ID")
-            client_secret = os.getenv("CLIENT_SECRET")
+            client_secret = os.getenv("CLIENT_KEY")
         except:
             pass
     
     if not client_id or not client_secret:
-        st.error("❌ CLIENT_ID and CLIENT_SECRET not found. Please configure .env file or Streamlit secrets.")
+        st.error("❌ CLIENT_ID and CLIENT_KEY not found. Please configure .env file or Streamlit secrets.")
         st.info("""
         **For Streamlit Cloud/Secrets:**
         Create `.streamlit/secrets.toml` with:
