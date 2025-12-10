@@ -6,6 +6,7 @@ import os
 import pandas as pd
 import csv
 import io
+import zipfile
 
 # Page configuration
 st.set_page_config(
@@ -333,6 +334,52 @@ def checkMenuItemsInventory(menu_items: list, location_id: str, inventory_lookup
             missing_items.append(item)
     return missing_items
 
+def create_consolidated_missing_inventory(all_missing_items):
+    """Create a consolidated CSV with all missing inventory items (Location and PLU only)"""
+    if not all_missing_items:
+        return None
+    
+    # Create dataframe with only Location and PLU
+    consolidated_data = []
+    for item in all_missing_items:
+        consolidated_data.append({
+            'Location': item.get('Location', ''),
+            'PLU': item.get('PLU', '')
+        })
+    
+    df = pd.DataFrame(consolidated_data)
+    
+    # Remove duplicates (same location and PLU)
+    df = df.drop_duplicates(subset=['Location', 'PLU'])
+    
+    # Sort by Location, then PLU
+    df = df.sort_values(by=['Location', 'PLU'])
+    
+    # Convert to CSV
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False)
+    return csv_buffer.getvalue()
+
+def create_zip_file(menu_files, missing_inventory_files, consolidated_missing_data=None):
+    """Create a zip file containing all CSV files"""
+    zip_buffer = io.BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        # Add all menu files
+        for file_info in menu_files:
+            zip_file.writestr(file_info['name'], file_info['data'])
+        
+        # Add all missing inventory files
+        for file_info in missing_inventory_files:
+            zip_file.writestr(file_info['name'], file_info['data'])
+        
+        # Add consolidated missing inventory file
+        if consolidated_missing_data:
+            zip_file.writestr("Consolidated_Missing_Inventory.csv", consolidated_missing_data)
+    
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
+
 
 # Main Processing
 st.divider()
@@ -392,10 +439,23 @@ if st.button("🧮 Calculate", type="primary", use_container_width=False):
                 st.divider()
                 st.header("📋 Menu Processing Results")
                 
+                # Initialize session state for storing all files
+                if 'all_menu_files' not in st.session_state:
+                    st.session_state.all_menu_files = []
+                if 'all_missing_inventory_files' not in st.session_state:
+                    st.session_state.all_missing_inventory_files = []
+                if 'all_missing_inventory_items' not in st.session_state:
+                    st.session_state.all_missing_inventory_items = []
+                
+                # Clear previous files
+                st.session_state.all_menu_files = []
+                st.session_state.all_missing_inventory_files = []
+                st.session_state.all_missing_inventory_items = []
+                
                 # Track menus without location IDs
                 menus_without_location = []
                 
-                # Create tabs for each menu
+                # Process all menus
                 if menu_ids:
                     for idx, menu_id in enumerate(menu_ids):
                         url = f"https://api.deliverect.io/channelMenus/{menu_id}"
@@ -425,6 +485,20 @@ if st.button("🧮 Calculate", type="primary", use_container_width=False):
                             if items:
                                 df = pd.DataFrame(items)
                                 
+                                # Store in session state for bulk download
+                                safe_menu_name = menu_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+                                safe_menu_name = "".join(c for c in safe_menu_name if c.isalnum() or c in ('_', '-', '.')).strip()
+                                
+                                csv_buffer = io.StringIO()
+                                df.to_csv(csv_buffer, index=False)
+                                csv_data = csv_buffer.getvalue()
+                                
+                                st.session_state.all_menu_files.append({
+                                    'name': f"{safe_menu_name}.csv",
+                                    'data': csv_data,
+                                    'menu_name': menu_name
+                                })
+                                
                                 # Display metrics
                                 col1, col2, col3 = st.columns(3)
                                 with col1:
@@ -440,13 +514,11 @@ if st.button("🧮 Calculate", type="primary", use_container_width=False):
                                 st.subheader("Menu Items")
                                 st.dataframe(df, use_container_width=True, height=300)
                                 
-                                # Download button for menu items
-                                csv_buffer = io.StringIO()
-                                df.to_csv(csv_buffer, index=False)
+                                # Download button for menu items (individual)
                                 st.download_button(
-                                    label=f"📥 Download Menu Items CSV",
-                                    data=csv_buffer.getvalue(),
-                                    file_name=f"{menu_name.replace(' ', '_')}.csv",
+                                    label=f"📥 Download {menu_name} Items CSV",
+                                    data=csv_data,
+                                    file_name=f"{safe_menu_name}.csv",
                                     mime="text/csv",
                                     key=f"download_menu_{menu_id}"
                                 )
@@ -463,13 +535,28 @@ if st.button("🧮 Calculate", type="primary", use_container_width=False):
                                         df_missing = pd.DataFrame(missing_items)
                                         st.dataframe(df_missing, use_container_width=True, height=200)
                                         
-                                        # Download button for missing inventory
+                                        # Add to consolidated list (for the combined file)
+                                        st.session_state.all_missing_inventory_items.extend(missing_items)
+                                        
+                                        # Store in session state for bulk download
+                                        safe_menu_name = menu_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+                                        safe_menu_name = "".join(c for c in safe_menu_name if c.isalnum() or c in ('_', '-', '.')).strip()
+                                        
                                         missing_csv_buffer = io.StringIO()
                                         df_missing.to_csv(missing_csv_buffer, index=False)
+                                        missing_csv_data = missing_csv_buffer.getvalue()
+                                        
+                                        st.session_state.all_missing_inventory_files.append({
+                                            'name': f"MissingInventory_{safe_menu_name}.csv",
+                                            'data': missing_csv_data,
+                                            'menu_name': menu_name
+                                        })
+                                        
+                                        # Download button for missing inventory (individual)
                                         st.download_button(
                                             label=f"📥 Download Missing Inventory Report",
-                                            data=missing_csv_buffer.getvalue(),
-                                            file_name=f"MissingInventory_{menu_name.replace(' ', '_')}.csv",
+                                            data=missing_csv_data,
+                                            file_name=f"MissingInventory_{safe_menu_name}.csv",
                                             mime="text/csv",
                                             key=f"download_missing_{menu_id}"
                                         )
@@ -503,6 +590,71 @@ if st.button("🧮 Calculate", type="primary", use_container_width=False):
                             """)
                     else:
                         st.success("✅ All menus successfully matched to locations!")
+                    
+                    # Download All button
+                    if st.session_state.all_menu_files or st.session_state.all_missing_inventory_files:
+                        st.divider()
+                        st.subheader("📦 Download All Files")
+                        
+                        # Create consolidated missing inventory file
+                        consolidated_missing_data = create_consolidated_missing_inventory(
+                            st.session_state.all_missing_inventory_items
+                        )
+                        
+                        total_files = len(st.session_state.all_menu_files) + len(st.session_state.all_missing_inventory_files)
+                        if consolidated_missing_data:
+                            total_files += 1
+                        
+                        file_summary = f"{len(st.session_state.all_menu_files)} menu file(s), {len(st.session_state.all_missing_inventory_files)} missing inventory file(s)"
+                        if consolidated_missing_data:
+                            file_summary += ", 1 consolidated missing inventory file"
+                        
+                        st.info(f"Ready to download {total_files} CSV file(s): {file_summary}")
+                        
+                        # Individual download for consolidated file
+                        if consolidated_missing_data:
+                            col1, col2 = st.columns([1, 1])
+                            with col1:
+                                st.download_button(
+                                    label="📥 Download Consolidated Missing Inventory",
+                                    data=consolidated_missing_data,
+                                    file_name=f"Consolidated_Missing_Inventory_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv",
+                                    key="download_consolidated_missing",
+                                    use_container_width=True
+                                )
+                            with col2:
+                                zip_data = create_zip_file(
+                                    st.session_state.all_menu_files,
+                                    st.session_state.all_missing_inventory_files,
+                                    consolidated_missing_data
+                                )
+                                
+                                st.download_button(
+                                    label="📦 Download All Files as ZIP",
+                                    data=zip_data,
+                                    file_name=f"Midnyt_Menu_Inventory_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                    mime="application/zip",
+                                    key="download_all_files",
+                                    use_container_width=True,
+                                    type="primary"
+                                )
+                        else:
+                            zip_data = create_zip_file(
+                                st.session_state.all_menu_files,
+                                st.session_state.all_missing_inventory_files,
+                                None
+                            )
+                            
+                            st.download_button(
+                                label="📦 Download All Files as ZIP",
+                                data=zip_data,
+                                file_name=f"Midnyt_Menu_Inventory_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                mime="application/zip",
+                                key="download_all_files",
+                                use_container_width=True,
+                                type="primary"
+                            )
                 else:
                     st.warning("No menus found for this account")
                     
@@ -537,4 +689,4 @@ with st.expander("ℹ️ How to Use"):
 
 # Footer
 st.divider()
-st.caption("Powered by Midnyt - Deliverect Menu & Inventory Checker v1.0")
+st.caption("Deliverect Menu & Inventory Checker v1.0")
